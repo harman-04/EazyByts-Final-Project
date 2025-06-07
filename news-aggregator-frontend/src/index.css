@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@tailwind utilities;
+/* Custom global styles can go here if needed */
+body {
+  font-family: 'Inter', sans-serif; /* Using the custom font defined in tailwind.config.js */
+  background-color: #F9FAFB; /* Use your defined background color */
+  color: #1F2937; /* Use your defined text color */
+}

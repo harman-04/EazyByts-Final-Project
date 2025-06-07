@@ -1,6 +1,7 @@
 package com.newsaggregator.backend.service;
 
 import com.newsaggregator.backend.dto.NewsArticleDTO;
+import com.newsaggregator.backend.dto.NewsArticlePageResponse;
 import com.newsaggregator.backend.entity.NewsArticle;
 import com.newsaggregator.backend.entity.Category;
 import com.newsaggregator.backend.entity.Source;
@@ -13,13 +14,13 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specification; // Keep this import
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional; // This might be useful
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -90,7 +91,7 @@ public class NewsArticleService {
         newArticle.setTitle(title);
         newArticle.setDescription(description);
         newArticle.setUrl(url);
-        newArticle.setImageUrl(imageUrl);
+        newArticle.setImageUrl(imageUrl); // <<< CORRECTED LINE HERE
         newArticle.setPublishedAt(publishedAt);
         newArticle.setSource(source);
         newArticle.setCategory(category);
@@ -101,16 +102,30 @@ public class NewsArticleService {
     }
 
     /**
-     * Fetches all news articles, ordered by published date descending.
+     * Fetches all news articles with pagination and sorting.
      */
     @Transactional(readOnly = true)
-    public List<NewsArticleDTO> getAllNewsArticles(int page, int size) {
-        logger.debug("Fetching all news articles (page: {}, size: {})", page, size);
-        Pageable pageable = PageRequest.of(page, size, Sort.by("publishedAt").descending());
+    public NewsArticlePageResponse getAllNewsArticles(int page, int size, String sortBy, String sortDir) {
+        logger.debug("Fetching all news articles (page: {}, size: {}, sortBy: {}, sortDir: {})", page, size, sortBy, sortDir);
+
+        Sort sort = sortDir.equalsIgnoreCase(Sort.Direction.ASC.name()) ?
+                Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
+
+        Pageable pageable = PageRequest.of(page, size, sort);
         Page<NewsArticle> articlesPage = newsArticleRepository.findAll(pageable);
-        return articlesPage.getContent().stream()
+
+        List<NewsArticleDTO> content = articlesPage.getContent().stream()
                 .map(this::convertToDto)
                 .collect(Collectors.toList());
+
+        return new NewsArticlePageResponse(
+                content,
+                articlesPage.getNumber(),
+                articlesPage.getSize(),
+                articlesPage.getTotalElements(),
+                articlesPage.getTotalPages(),
+                articlesPage.isLast()
+        );
     }
 
     /**
@@ -128,13 +143,22 @@ public class NewsArticleService {
     }
 
     /**
-     * Fetches news articles based on search criteria.
-     * Uses JPA Specifications for dynamic queries.
+     * Fetches news articles based on search criteria, with pagination and sorting,
+     * including optional date range.
      */
     @Transactional(readOnly = true)
-    public List<NewsArticleDTO> searchNewsArticles(String keyword, Long categoryId, Long sourceId, int page, int size) {
-        logger.debug("Searching news articles with keyword: '{}', categoryId: {}, sourceId: {} (page: {}, size: {})",
-                keyword, categoryId, sourceId, page, size);
+    public NewsArticlePageResponse searchNewsArticles(String keyword, Long categoryId, Long sourceId,
+                                                      LocalDateTime startDate, LocalDateTime endDate,
+                                                      int page, int size, String sortBy, String sortDir) {
+        logger.debug("Searching news articles with keyword: '{}', categoryId: {}, sourceId: {}, startDate: {}, endDate: {} (page: {}, size: {}, sortBy: {}, sortDir: {})",
+                keyword, categoryId, sourceId, startDate, endDate, page, size, sortBy, sortDir);
+
+        // Build Sort object
+        Sort sort = sortDir.equalsIgnoreCase(Sort.Direction.ASC.name()) ?
+                Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
+
+        // Build Pageable object with pagination and sorting
+        Pageable pageable = PageRequest.of(page, size, sort);
 
         // Initialize spec as null, then build it conditionally
         Specification<NewsArticle> spec = null;
@@ -165,20 +189,38 @@ public class NewsArticleService {
             spec = combineSpecifications(spec, sourceSpec);
         }
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by("publishedAt").descending());
+        // New: Add date range filtering
+        if (startDate != null) {
+            Specification<NewsArticle> startDateSpec = (root, query, criteriaBuilder) ->
+                    criteriaBuilder.greaterThanOrEqualTo(root.get("publishedAt"), startDate);
+            spec = combineSpecifications(spec, startDateSpec);
+        }
 
-        // Handle the case where no specifications are applied
+        if (endDate != null) {
+            Specification<NewsArticle> endDateSpec = (root, query, criteriaBuilder) ->
+                    criteriaBuilder.lessThanOrEqualTo(root.get("publishedAt"), endDate);
+            spec = combineSpecifications(spec, endDateSpec);
+        }
+
         Page<NewsArticle> articlesPage;
         if (spec != null) {
             articlesPage = newsArticleRepository.findAll(spec, pageable);
         } else {
-            articlesPage = newsArticleRepository.findAll(pageable); // If no filters, just get all with pagination
+            articlesPage = newsArticleRepository.findAll(pageable); // If no filters, just get all with pagination and sorting
         }
 
-
-        return articlesPage.getContent().stream()
+        List<NewsArticleDTO> content = articlesPage.getContent().stream()
                 .map(this::convertToDto)
                 .collect(Collectors.toList());
+
+        return new NewsArticlePageResponse(
+                content,
+                articlesPage.getNumber(),
+                articlesPage.getSize(),
+                articlesPage.getTotalElements(),
+                articlesPage.getTotalPages(),
+                articlesPage.isLast()
+        );
     }
 
     // Helper method to combine specifications
